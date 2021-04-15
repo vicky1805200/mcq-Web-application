@@ -1,0 +1,152 @@
+"""mcqWebApp URL Configuration
+The `urlpatterns` list routes URLs to views. For more information please see:
+    https://docs.djangoproject.com/en/1.9/topics/http/urls/
+Examples:
+Function views
+    1. Add an import:  from my_app import views
+    2. Add a URL to urlpatterns:  url(r'^$', views.home, name='home')
+Class-based views
+    1. Add an import:  from other_app.views import Home
+    2. Add a URL to urlpatterns:  url(r'^$', Home.as_view(), name='home')
+Including another URLconf
+    1. Add an import:  from blog import urls as blog_urls
+    2. Import the include() function: from django.conf.urls import url, include
+    3. Add a URL to urlpatterns:  url(r'^blog/', include(blog_urls))
+"""
+from django.conf.urls import url, include
+from django.contrib import admin
+from questions import views
+from registration.backends.default import urls
+
+
+urlpatterns = [
+    url(r'^ifdebug/', views.ifdebug, name='ifdebug'),
+    url(r'^tests/(?P<test_id>\d+)/score/$', views.score, name='score'),
+    url(r'^ans_submit/', views.ans_submit, name='ans_submit'),
+    url(r'^q_submit/', views.state_change, name='q_submit'),
+    url(r'^tests/(?P<test_id>\d+)/(?P<id>\d+)/$', views.question, name='contest_que'),
+    url(r'^$', views.index, name='index'),
+    url(r'^accounts/', include('registration.backends.simple.urls')),
+    url(r'^tests/$', views.show_tests, name='tests'),
+    url(r'^tests/(?P<test_id>\d+)/$', views.test_details, name='test_details'),
+    url(r'^tests/(?P<test_id>\d+)/testcompleted/$', views.test_completed, name='test_completed'),
+    url(r'^admin/', admin.site.urls),
+]
+# MODELS IMPORT
+# =======================================================
+# import models from 'questions' app
+from .models import Question
+from .models import Contestant
+from .models import Test
+from .models import Association
+from .models import UsersTest
+from django.contrib.auth.models import User
+# UTILITY PACKAGES
+# =======================================================
+from django.core.exceptions import ObjectDoesNotExist
+from django.conf import settings
+from django.shortcuts import render, redirect
+from django.http import HttpResponse
+from django.contrib.auth.decorators import login_required
+# HELPER FUNCTIONS START
+# =======================================================
+def question_pk_list(request):
+    '''
+    Finds number of questions in database
+    '''
+    try:
+        pk_list = list(Question.objects.values_list("pk", flat=True))
+    except ObjectDoesNotExist as err:
+        return HttpError(request=request,
+                         error="Database Error: ObjectDoesNotExist",
+                         details=err)
+    return pk_list
+def total_questions(request):
+    '''
+    Finds total number of questions
+    '''
+    try:
+        total = int(Question.objects.all().count())
+    except ObjectDoesNotExist as err:
+        return HttpError(request=request,
+                         error="Database Error: ObjectDoesNotExist",
+                         details=err)
+    return total
+def get_contestant(request):
+    '''
+    returns contestant for given user
+    '''
+    try:
+        loggedin_user = User.objects.get(username=request.user)
+    except ObjectDoesNotExist as err:
+        return HttpError(request=request,
+                         error="Database Error: ObjectDoesNotExist",
+                         details=err)
+    try:
+        contestant = Contestant.objects.get(user=loggedin_user)
+    # if user logins for first time	set the contestant with user
+    except ObjectDoesNotExist:
+        contestant = Contestant(user=loggedin_user)
+        contestant.save()
+    return contestant
+def HttpError(**args):
+    '''
+    Error wrapper
+    '''
+    if args['error'] and args['details'] and args['request']:
+        error = args['error']
+        details = args['details']
+        try:
+            title = args['title']
+        except KeyError:
+            title = "Error | mcqWebApp"
+        context = {
+            "error": error,
+            "title": title
+        }
+        return render(args['request'], 'questions/error.html', context)
+    else:
+        return HttpError(
+            request=args['request'],
+            error="Argument Error: function 'HttpError' requires 'error' and 'details' argument ",
+            details="no details required")
+# HELPER FUNCTIONS ENDS
+# *******************************************************
+# VIEWS STARTS
+# =======================================================
+def index(request):
+    '''
+    Home page view
+    '''
+    app_name = getattr(settings, "APP_NAME", None)
+    context = {
+        "title": "Home  | Welcome to mcqWebApp",
+        "app_name": app_name
+    }
+    return render(request, 'questions/index.html', context)
+
+
+@login_required
+def contest(request, id):
+    '''
+    Contest view ..first checks the current question state and then redirects to it
+    '''
+    contestant = get_contestant(request)
+    # first time login
+    id = 4
+    if contestant.first_login is False:
+        question_indexes = test_details(request, id)
+        contestant.set_questions(question_indexes)
+        contestant.set_answer(question_indexes)
+        contestant.set_login(True)
+        id = 1
+    else:
+        print("first login True")
+        id = contestant.current_que_id
+    return redirect('/test/' + str(id))
+
+
+@login_required
+def score(request, test_id):
+    userstest = get_user_tests(request, test_id)
+    
